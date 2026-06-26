@@ -3,53 +3,37 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ limit: '20mb' }));
+app.use(cors({ origin: '*' }));
+app.use(express.json({ limit: '25mb' }));
 
-// Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'GigReady backend is running!' });
+  res.json({ status: 'GigReady backend is running!', apiKey: process.env.ANTHROPIC_API_KEY ? 'SET ✓' : 'MISSING ✗' });
 });
 
-// Main analyse endpoint
 app.post('/analyse', async (req, res) => {
   try {
     const { imageBase64, imageMediaType } = req.body;
 
-    // Validate input
-    if (!imageBase64) {
-      return res.status(400).json({ error: 'Image data (imageBase64) is required.' });
-    }
-    if (!imageMediaType) {
-      return res.status(400).json({ error: 'Image media type is required.' });
+    if (!imageBase64 || !imageMediaType) {
+      return res.status(400).json({ error: 'Missing imageBase64 or imageMediaType.' });
     }
 
-    // Check API key exists
     if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('ANTHROPIC_API_KEY not set in environment');
-      return res.status(500).json({ error: 'Server configuration error: API key missing.' });
+      return res.status(500).json({ error: 'API key not configured on server.' });
     }
 
-    const prompt = `You are GigReady, an expert live sound engineer and concert production specialist with 20+ years of experience.
+    const prompt = `You are GigReady, an expert live sound engineer with 20+ years of experience.
 
-Analyse this venue photo carefully. Look at:
-- The SIZE of the space (small club, medium hall, large arena, outdoor, etc.)
-- The TYPE of venue (indoor, outdoor, theatre, warehouse, church, stadium, etc.)
-- The STAGE setup visible
-- The AUDIENCE capacity you can estimate
-- The CEILING HEIGHT and acoustics
-- Any existing infrastructure visible
+Analyse this venue photo and generate a COMPLETE concert equipment list.
 
-Based on your analysis, generate a COMPLETE concert equipment list in this EXACT JSON format:
+Respond ONLY with this exact JSON structure, no markdown, no backticks, no extra text:
 
 {
   "venue_analysis": {
-    "venue_type": "string describing the venue type",
+    "venue_type": "describe the venue",
     "estimated_capacity": "e.g. 200-500 people",
-    "size_category": "Small / Medium / Large / Arena",
-    "key_observations": "2-3 sentences about what you see and why it affects equipment needs"
+    "size_category": "Small or Medium or Large or Arena",
+    "key_observations": "2-3 sentences about the venue and equipment needs"
   },
   "categories": [
     {
@@ -58,36 +42,29 @@ Based on your analysis, generate a COMPLETE concert equipment list in this EXACT
       "color": "#7c3aff",
       "items": [
         {
-          "name": "Equipment name",
+          "name": "specific equipment name",
           "priority": "Critical",
-          "description": "Why this is needed for this specific venue"
+          "description": "why this is needed for this venue"
         }
       ]
     }
   ]
 }
 
-Include these categories (only include items relevant to the venue):
-1. PA System & Speakers (mains, subs, fills, monitors)
-2. Mixing & Signal Processing (mixers, EQ, compressors, effects)
-3. Microphones & DI Boxes
-4. Instruments & Backline (drums, keyboards, guitars, bass)
-5. Cables & Connectivity (XLR, speaker cables, power, multicore/snake)
-6. Lighting & Visual (stage lights, follow spots, LED bars, haze machine)
-7. Power & Infrastructure (power distro, UPS, generators if outdoor)
-8. Stage & Support Gear (stands, risers, monitors, IEM systems)
+Use these 8 categories:
+1. PA System & Speakers - icon 🔊 color #7c3aff
+2. Mixing & Signal Processing - icon 🎛 color #0ea5e9
+3. Microphones & DI Boxes - icon 🎤 color #f59e0b
+4. Instruments & Backline - icon 🎸 color #10b981
+5. Cables & Connectivity - icon 🔌 color #ef4444
+6. Lighting & Visual - icon 💡 color #f97316
+7. Power & Infrastructure - icon ⚡ color #8b5cf6
+8. Stage & Support Gear - icon 🎚 color #ec4899
 
-Priority levels:
-- "Critical" = must have or the concert cannot happen
-- "Recommended" = strongly advised for professional quality
-- "Optional" = nice to have, enhances the experience
+Priority must be exactly: Critical, Recommended, or Optional
+Give 4-6 items per category. Be specific with real product names.`;
 
-Be SPECIFIC and PRACTICAL. Name real equipment types (e.g. "QSC K12.2 Active Speakers" not just "speakers"). Give 4-8 items per category. Tailor everything to what you actually see in the image.
-
-Return ONLY the JSON. No markdown, no explanation, no backticks.`;
-
-    // Call Anthropic API
-    const anthropicResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -100,105 +77,51 @@ Return ONLY the JSON. No markdown, no explanation, no backticks.`;
         messages: [{
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: imageMediaType,
-                data: imageBase64
-              }
-            },
-            {
-              type: 'text',
-              text: prompt
-            }
+            { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
+            { type: 'text', text: prompt }
           ]
         }]
       })
     });
 
-    // Handle API errors
-    if (!anthropicResponse.ok) {
-      const errData = await anthropicResponse.json().catch(() => ({}));
-      const errorMsg = errData.error?.message || errData.message || `Anthropic API error ${anthropicResponse.status}`;
-      console.error('Anthropic API error:', errorMsg);
-      
-      if (anthropicResponse.status === 401) {
-        return res.status(401).json({ error: 'API key is invalid or expired.' });
-      }
-      if (anthropicResponse.status === 429) {
-        return res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.' });
-      }
-      
-      return res.status(anthropicResponse.status).json({ error: errorMsg });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      const msg = err.error?.message || `Anthropic error ${response.status}`;
+      console.error('Anthropic error:', msg);
+      return res.status(response.status).json({ error: msg });
     }
 
-    const data = await anthropicResponse.json();
+    const data = await response.json();
+    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
 
-    // Extract text from response
-    if (!data.content || data.content.length === 0) {
-      return res.status(500).json({ error: 'Empty response from AI. Please try again.' });
-    }
+    if (!rawText) return res.status(500).json({ error: 'Empty response from AI.' });
 
-    const rawText = data.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('');
-
-    if (!rawText) {
-      return res.status(500).json({ error: 'No text content in AI response.' });
-    }
-
-    // Clean and parse JSON
-    const cleaned = rawText
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
+    // Clean and parse
+    let cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.status(500).json({ error: 'Could not find JSON in AI response.' });
 
     let parsed;
     try {
-      parsed = JSON.parse(cleaned);
-    } catch (parseErr) {
-      // Try to extract JSON object from text
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          parsed = JSON.parse(match[0]);
-        } catch (innerErr) {
-          console.error('JSON parse error:', innerErr.message);
-          return res.status(500).json({ error: 'Could not parse AI response. Please try again.' });
-        }
-      } else {
-        console.error('No JSON found in response:', cleaned.substring(0, 200));
-        return res.status(500).json({ error: 'Invalid response format. Please try again.' });
-      }
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      return res.status(500).json({ error: 'Failed to parse AI response as JSON.' });
     }
 
-    // Validate structure
     if (!parsed.venue_analysis || !parsed.categories) {
-      console.error('Missing expected fields in parsed response');
-      return res.status(500).json({ error: 'Unexpected response structure. Please try again.' });
+      return res.status(500).json({ error: 'AI response missing required fields.' });
     }
 
-    // Return the full Anthropic response (for frontend compatibility)
-    res.json({
-      content: [{ type: 'text', text: JSON.stringify(parsed) }]
-    });
+    res.json(parsed);
 
   } catch (err) {
-    console.error('Server error:', err);
-    res.status(500).json({ error: err.message || 'Server error. Please try again.' });
+    console.error('Server error:', err.message);
+    res.status(500).json({ error: err.message || 'Unexpected server error.' });
   }
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error.' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🎛 GigReady backend running on port ${PORT}`);
-  console.log(`API Key configured: ${process.env.ANTHROPIC_API_KEY ? 'YES ✓' : 'NO ✗'}`);
+  console.log(`GigReady running on port ${PORT}`);
+  console.log(`API Key: ${process.env.ANTHROPIC_API_KEY ? 'SET ✓' : 'MISSING ✗'}`);
 });
