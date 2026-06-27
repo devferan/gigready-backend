@@ -7,7 +7,10 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '25mb' }));
 
 app.get('/', (req, res) => {
-  res.json({ status: 'GigReady backend is running!', apiKey: process.env.ANTHROPIC_API_KEY ? 'SET ✓' : 'MISSING ✗' });
+  res.json({ 
+    status: 'GigReady backend is running!', 
+    apiKey: process.env.GEMINI_API_KEY ? 'SET ✓' : 'MISSING ✗' 
+  });
 });
 
 app.post('/analyse', async (req, res) => {
@@ -18,7 +21,7 @@ app.post('/analyse', async (req, res) => {
       return res.status(400).json({ error: 'Missing imageBase64 or imageMediaType.' });
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({ error: 'API key not configured on server.' });
     }
 
@@ -64,39 +67,46 @@ Use these 8 categories:
 Priority must be exactly: Critical, Recommended, or Optional
 Give 4-6 items per category. Be specific with real product names.`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      })
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                inline_data: {
+                  mime_type: imageMediaType,
+                  data: imageBase64
+                }
+              },
+              { text: prompt }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.4,
+            maxOutputTokens: 4000
+          }
+        })
+      }
+    );
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      const msg = err.error?.message || `Anthropic error ${response.status}`;
-      console.error('Anthropic error:', msg);
+      const msg = err.error?.message || `Gemini API error ${response.status}`;
+      console.error('Gemini error:', msg);
       return res.status(response.status).json({ error: msg });
     }
 
     const data = await response.json();
-    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+
+    // Extract text from Gemini response
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     if (!rawText) return res.status(500).json({ error: 'Empty response from AI.' });
 
-    // Clean and parse
+    // Clean and parse JSON
     let cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return res.status(500).json({ error: 'Could not find JSON in AI response.' });
@@ -120,8 +130,13 @@ Give 4-6 items per category. Be specific with real product names.`;
   }
 });
 
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error.' });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`GigReady running on port ${PORT}`);
-  console.log(`API Key: ${process.env.ANTHROPIC_API_KEY ? 'SET ✓' : 'MISSING ✗'}`);
+  console.log(`Gemini API Key: ${process.env.GEMINI_API_KEY ? 'SET ✓' : 'MISSING ✗'}`);
 });
