@@ -68,7 +68,7 @@ Priority must be exactly: Critical, Recommended, or Optional
 Give 4-6 items per category. Be specific with real product names.`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -100,13 +100,10 @@ Give 4-6 items per category. Be specific with real product names.`;
     }
 
     const data = await response.json();
-
-    // Extract text from Gemini response
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     if (!rawText) return res.status(500).json({ error: 'Empty response from AI.' });
 
-    // Clean and parse JSON
     let cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return res.status(500).json({ error: 'Could not find JSON in AI response.' });
@@ -130,13 +127,9 @@ Give 4-6 items per category. Be specific with real product names.`;
   }
 });
 
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error.' });
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`GigReady running on port ${PORT}`);
   console.log(`Gemini API Key: ${process.env.GEMINI_API_KEY ? 'SET ✓' : 'MISSING ✗'}`);
 });
+      
